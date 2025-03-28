@@ -1,0 +1,41 @@
+services:
+  gateway:
+    container_name: api_gateway
+    build:
+      context: ./apps/api_gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    # map a volume for the file uploads
+    volumes:
+      - ./.data/uploads:/usr/src/app/uploads
+    depends_on:
+      - db
+      - redis
+      - ingestion
+  ingestion:
+    container_name: doc_ingestion
+    build:
+      context: ./apps/doc_ingestion
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres
+    container_name: postgres
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./.data/db:/var/lib/postgresql/data
+
+  redis:
+    container_name: redis
+    build: ./apps/redis
+    volumes:
+      - ./.data/redis:/data
