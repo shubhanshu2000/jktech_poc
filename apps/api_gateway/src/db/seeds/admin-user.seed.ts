@@ -8,20 +8,20 @@ export default class AdminUserSeeder implements Seeder {
 
     const existingAdminUser = await repository.findOne({
       where: {
-        email: "superadmin@admin.com",
+        email: "admin@admin.com",
       },
     });
 
     if (!existingAdminUser) {
       await repository.save(
         repository.create({
-          email: "superadmin@admin.com",
+          email: "admin@admin.com",
           roleId: 1,
           firstName: "Admin",
           lastName: "Admin",
           passwordHash:
             "$2a$10$iER0FCL2ZiHaIpnv59XrKu9OksAEu/gCNzq.4YrjPM2V3jPt3d6ue",
-        }),
+        })
       );
     }
   }
