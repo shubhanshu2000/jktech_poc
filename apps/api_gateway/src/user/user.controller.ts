@@ -1,4 +1,11 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { CheckPermissions } from "src/global/decorators/check-permission.decorator";
 import { PermissionGuard } from "src/global/guards/permission.guard";
@@ -65,6 +72,35 @@ export class UserController {
     return {
       message: "Login successful",
       token,
+    };
+  }
+
+  @Post("logout")
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiResponse({
+    status: 200,
+    description: "Logout successful",
+    schema: {
+      example: {
+        message: "Logged out successfully",
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: "Unauthorized",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Internal Server Error",
+  })
+  async logout(@Request() req: any) {
+    const token = req.headers.authorization?.split(" ")[1];
+    await this.authService.logout(token);
+
+    return {
+      message: "Logged out successfully",
     };
   }
 

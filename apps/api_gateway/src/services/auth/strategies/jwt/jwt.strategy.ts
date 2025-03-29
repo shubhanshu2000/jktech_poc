@@ -5,13 +5,15 @@ import { ExtractJwt, Strategy } from "passport-jwt";
 import { JWTVerifiedPayload } from "../../interfaces/payload.interface";
 import { ClsService } from "nestjs-cls";
 import { UserService } from "src/services/user/user.service";
+import { RedisService } from "src/services/redis/redis.service";
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     readonly config: ConfigService,
     private readonly user: UserService,
-    private readonly cls: ClsService
+    private readonly cls: ClsService,
+    private readonly redisService: RedisService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -26,6 +28,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * @returns the payload if the user is valid to be stored in the request.user
    */
   async validate(payload: JWTVerifiedPayload) {
+    const token = this.cls.get("token");
+
+    if (await this.redisService.isBlacklisted(token)) {
+      throw new ForbiddenException("Token has been revoked");
+    }
+
     const userDetails = await this.user.isUserExists(payload.email);
 
     if (!userDetails) {

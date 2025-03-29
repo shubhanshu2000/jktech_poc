@@ -7,6 +7,7 @@ import { GlobalModule } from "./global/global.module";
 import { IngestionModule } from "./ingestion/ingestion.module";
 import { UserModule } from "./user/user.module";
 import { getConfig } from "./services/app-config/configuration";
+import { RedisService } from './services/redis/redis.service';
 
 @Module({
   imports: [
@@ -28,5 +29,6 @@ import { getConfig } from "./services/app-config/configuration";
     DocumentModule,
     IngestionModule,
   ],
+  providers: [RedisService],
 })
 export class AppModule {}

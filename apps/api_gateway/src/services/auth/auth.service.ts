@@ -2,10 +2,16 @@ import { HttpException, HttpStatus, Injectable } from "@nestjs/common";
 import { CreateUserDto } from "../../user/dto/create-user.dto";
 import { LoginDto } from "../../user/dto/login.dto";
 import { UserService } from "../user/user.service";
+import { ConfigService } from "@nestjs/config";
+import { RedisService } from "../redis/redis.service";
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly redisService: RedisService,
+    private readonly configService: ConfigService
+  ) {}
 
   /**
    * Register a new user
@@ -42,6 +48,47 @@ export class AuthService {
     }
 
     this.failLogin("Incorrect password");
+  }
+
+  /**
+   * Logout a user by blacklisting their token
+   * @param token JWT token to blacklist
+   */
+  async logout(token: string): Promise<void> {
+    try {
+      const jwtExpiry = this.configService.get("jwt.expiry");
+      const expiryInSeconds = this.parseExpiryToSeconds(jwtExpiry);
+
+      await this.redisService.addToBlacklist(token, expiryInSeconds);
+    } catch (error) {
+      throw new HttpException(
+        "Logout failed",
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Convert JWT expiry time to seconds
+   * @param expiry JWT expiry time (e.g., "2h", "1d")
+   * @returns expiry time in seconds
+   */
+  private parseExpiryToSeconds(expiry: string): number {
+    const unit = expiry.slice(-1);
+    const value = parseInt(expiry.slice(0, -1));
+
+    switch (unit) {
+      case "h":
+        return value * 60 * 60;
+      case "d":
+        return value * 24 * 60 * 60;
+      case "m":
+        return value * 60;
+      case "s":
+        return value;
+      default:
+        return 7200; // 2 hours default
+    }
   }
 
   /**
