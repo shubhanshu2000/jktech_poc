@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { createMock, DeepMocked } from '@golevelup/ts-jest';
+import { createMock, DeepMocked } from '@golevelup/ts-jest/lib/mocks';
 import { AppService } from './ingestion.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { IngestionEntity } from './entities/ingestion.entity';

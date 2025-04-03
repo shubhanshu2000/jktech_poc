@@ -1,4 +1,4 @@
-import { createMock, DeepMocked } from '@golevelup/ts-jest';
+import { createMock, DeepMocked } from '@golevelup/ts-jest/lib/mocks';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './ingestion.controller';
 import { AppService } from './ingestion.service';
