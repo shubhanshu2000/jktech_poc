@@ -1,36 +1,108 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { JwtService } from "./jwt.service";
 import { ConfigService } from "@nestjs/config";
-import { createMock } from "@golevelup/ts-jest";
+import { JwtService } from "./jwt.service";
+import * as jsonwebtoken from "jsonwebtoken";
+import { UnauthorizedException } from "@nestjs/common";
 
-jest.mock("jsonwebtoken", () => {
-  return { sign: jest.fn().mockReturnValue("jwt") };
-});
+jest.mock("jsonwebtoken");
 
 describe("JwtService", () => {
   let service: JwtService;
-  let config: ConfigService;
+  let configService: ConfigService;
+
+  const mockSecret = "test-secret";
+  const mockExpiry = "1h";
+  const mockPayload = { userId: 1, email: "test@example.com" };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [JwtService, ConfigService],
-    })
-      .useMocker(createMock)
-      .compile();
+      providers: [
+        JwtService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => {
+              switch (key) {
+                case "jwt.secret":
+                  return mockSecret;
+                case "jwt.expiry":
+                  return mockExpiry;
+                default:
+                  return null;
+              }
+            }),
+          },
+        },
+      ],
+    }).compile();
 
     service = module.get<JwtService>(JwtService);
-    config = module.get<ConfigService>(ConfigService);
+    configService = module.get<ConfigService>(ConfigService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
   });
 
   it("should be defined", () => {
     expect(service).toBeDefined();
   });
 
-  it("should be sign jwt tokens", () => {
-    const configGetSpy = jest.spyOn(config, "get").mockReturnValue("secret");
+  describe("sign", () => {
+    it("should sign payload with correct secret and expiry", () => {
+      const mockToken = "mock-jwt-token";
+      (jsonwebtoken.sign as jest.Mock).mockReturnValue(mockToken);
 
-    expect(service.sign("payload")).toBe("jwt");
-    expect(configGetSpy).toHaveBeenNthCalledWith(1, "jwt.secret");
-    expect(configGetSpy).toHaveBeenNthCalledWith(2, "jwt.expiry");
+      const result = service.sign(mockPayload);
+
+      expect(result).toBe(mockToken);
+      expect(jsonwebtoken.sign).toHaveBeenCalledWith(mockPayload, mockSecret, {
+        expiresIn: mockExpiry,
+      });
+      expect(configService.get).toHaveBeenCalledWith("jwt.secret");
+      expect(configService.get).toHaveBeenCalledWith("jwt.expiry");
+    });
+
+    it("should handle string payload", () => {
+      const stringPayload = "test-payload";
+      const mockToken = "mock-jwt-token";
+      (jsonwebtoken.sign as jest.Mock).mockReturnValue(mockToken);
+
+      const result = service.sign(stringPayload);
+
+      expect(result).toBe(mockToken);
+      expect(jsonwebtoken.sign).toHaveBeenCalledWith(
+        stringPayload,
+        mockSecret,
+        { expiresIn: mockExpiry }
+      );
+    });
+
+    it("should handle Buffer payload", () => {
+      const bufferPayload = Buffer.from("test-payload");
+      const mockToken = "mock-jwt-token";
+      (jsonwebtoken.sign as jest.Mock).mockReturnValue(mockToken);
+
+      const result = service.sign(bufferPayload);
+
+      expect(result).toBe(mockToken);
+      expect(jsonwebtoken.sign).toHaveBeenCalledWith(
+        bufferPayload,
+        mockSecret,
+        { expiresIn: mockExpiry }
+      );
+    });
+
+    it("should throw UnauthorizedException if jwt secret is not configured", () => {
+      jest.spyOn(configService, "get").mockImplementation((key: string) => {
+        if (key === "jwt.secret") return null;
+        return mockExpiry;
+      });
+
+      expect(() => service.sign(mockPayload)).toThrow(UnauthorizedException);
+      expect(() => service.sign(mockPayload)).toThrow(
+        "JWT secret is not configured"
+      );
+    });
   });
 });

@@ -1,41 +1,120 @@
-import { createMock, DeepMocked } from "@golevelup/ts-jest";
-import { NotFoundException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
+import { ConfigService } from "@nestjs/config";
+import { NotFoundException } from "@nestjs/common";
+import { Readable } from "stream";
 import { getRepositoryToken } from "@nestjs/typeorm";
-import * as nodeFs from "fs";
-import * as fs from "fs/promises";
-import * as path from "path";
 import { Repository } from "typeorm";
 import { DocumentService } from "./document.service";
-import { convertBytes } from "./utils/convertByte";
 import { DocumentEntity } from "./entities/document.entity";
 
+// Setup all mocks
+jest.mock("path-scurry", () => ({
+  Scurry: jest.fn(),
+  Path: jest.fn(),
+  native: {
+    sep: "/",
+    delimiter: ":",
+  },
+}));
+
+jest.mock("glob", () => ({
+  sync: jest.fn(),
+  glob: jest.fn(),
+  Glob: jest.fn(),
+  hasMagic: jest.fn(),
+  escape: jest.fn(),
+  unescape: jest.fn(),
+}));
+
+jest.mock("typeorm", () => {
+  const actual = jest.requireActual("typeorm");
+  return {
+    ...actual,
+    getRepository: jest.fn(),
+    Repository: jest.fn(),
+    DataSource: jest.fn(),
+    EntityManager: jest.fn(),
+    PlatformTools: {
+      load: jest.fn(),
+      pathModule: {
+        dirname: jest.fn(),
+        resolve: jest.fn(),
+      },
+    },
+  };
+});
+
+jest.mock("path", () => ({
+  join: jest.fn((a, b) => `${a}/${b}`),
+  dirname: jest.fn((path) => path),
+  resolve: jest.fn((path) => path),
+  normalize: jest.fn((path) => path),
+  basename: jest.fn((path) => path),
+  extname: jest.fn((path) => ".txt"),
+  parse: jest.fn(),
+  format: jest.fn(),
+  sep: "/",
+  delimiter: ":",
+}));
+
+jest.mock("fs", () => ({
+  createReadStream: jest.fn(() => new Readable()),
+  existsSync: jest.fn(),
+  readFileSync: jest.fn(),
+  writeFileSync: jest.fn(),
+}));
+
+jest.mock("fs/promises", () => ({
+  rm: jest.fn(),
+  stat: jest.fn(),
+  readFile: jest.fn(),
+  writeFile: jest.fn(),
+}));
+
 jest.mock("./utils/convertByte", () => ({
-  convertBytes: jest.fn(),
+  convertBytes: jest.fn().mockReturnValue("1 KB"),
 }));
 
 describe("DocumentService", () => {
   let service: DocumentService;
-  let config: DeepMocked<ConfigService>;
-  let repo: DeepMocked<Repository<DocumentEntity>>;
+  let repository: Repository<DocumentEntity>;
+  let configService: ConfigService;
+
+  const mockRepository = {
+    create: jest.fn(),
+    save: jest.fn(),
+    findOne: jest.fn(),
+    find: jest.fn(),
+    remove: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn().mockReturnValue("/upload/path"),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DocumentService,
-        { provide: ConfigService, useValue: createMock<ConfigService>() },
         {
           provide: getRepositoryToken(DocumentEntity),
-          useValue: createMock(),
+          useValue: mockRepository,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
 
-    config = module.get(ConfigService);
     service = module.get<DocumentService>(DocumentService);
-    repo = module.get(getRepositoryToken(DocumentEntity));
+    repository = module.get<Repository<DocumentEntity>>(
+      getRepositoryToken(DocumentEntity)
+    );
+    configService = module.get<ConfigService>(ConfigService);
+  });
 
+  afterEach(() => {
     jest.clearAllMocks();
   });
 
@@ -43,195 +122,223 @@ describe("DocumentService", () => {
     expect(service).toBeDefined();
   });
 
-  it("should create a document", async () => {
-    repo.save.mockResolvedValue({} as any);
+  describe("create", () => {
+    const mockFile = {
+      originalname: "test.txt",
+      filename: "test-123.txt",
+      mimetype: "text/plain",
+      path: "/tmp/test-123.txt",
+    } as Express.Multer.File;
 
-    await service.create({
-      originalname: "originalname",
-      filename: "filename",
-      mimetype: "mimetype",
-    } as any);
+    it("should create a document", async () => {
+      const mockDocument = {
+        id: 1,
+        originalName: mockFile.originalname,
+        name: mockFile.filename,
+        mimeType: mockFile.mimetype,
+      };
 
-    expect(repo.save).toHaveBeenCalledTimes(1);
+      mockRepository.save.mockResolvedValue(mockDocument);
+
+      const result = await service.create(mockFile);
+      expect(result).toEqual(mockDocument);
+    });
+
+    it("should handle create error and cleanup file", async () => {
+      mockRepository.save.mockRejectedValue(new Error("Save failed"));
+      const fsPromises = require("fs/promises");
+
+      await expect(service.create(mockFile)).rejects.toThrow("Save failed");
+      expect(fsPromises.rm).toHaveBeenCalledWith(mockFile.path);
+    });
   });
 
-  it("should throw an error if the document creation fails", async () => {
-    repo.save.mockRejectedValue(new Error("error"));
-    jest.spyOn(fs, "rm").mockResolvedValue();
+  describe("getDocumentById", () => {
+    it("should return a document if found", async () => {
+      const mockDocument = { id: 1, name: "test.txt" };
+      mockRepository.findOne.mockResolvedValue(mockDocument);
 
-    await expect(
-      service.create({
-        originalname: "originalname",
-        filename: "filename",
-        mimetype: "mimetype",
-        path: "path",
-      } as any)
-    ).rejects.toThrow("error");
+      const result = await service.getDocumentById(1);
+      expect(result).toEqual(mockDocument);
+    });
 
-    expect(repo.save).toHaveBeenCalledTimes(1);
+    it("should throw NotFoundException if document not found", async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.getDocumentById(1)).rejects.toThrow(
+        NotFoundException
+      );
+    });
   });
 
-  it("it should delete the file if the document creation fails", async () => {
-    const rmSpy = jest.spyOn(fs, "rm");
-    repo.save.mockRejectedValue(new Error("error"));
-
-    const document = {
-      originalname: "originalname",
-      filename: "filename",
-      mimetype: "mimetype",
-      path: "path",
+  describe("retrieveDocument", () => {
+    const mockDocument = {
+      id: 1,
+      name: "test.txt",
+      mimeType: "text/plain",
+      originalName: "original.txt",
     };
 
-    await expect(service.create(document as any)).rejects.toThrow();
+    it("should retrieve a document", async () => {
+      mockRepository.findOne.mockResolvedValue(mockDocument);
+      require("fs").existsSync.mockReturnValue(true);
 
-    expect(repo.save).toHaveBeenCalledTimes(1);
-    expect(rmSpy).toHaveBeenCalledWith(document.path);
+      const result = await service.retrieveDocument(1);
+
+      expect(result).toEqual({
+        stream: expect.any(Readable),
+        mimeType: mockDocument.mimeType,
+        originalName: mockDocument.originalName,
+      });
+    });
+
+    it("should throw NotFoundException when document not found", async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.retrieveDocument(1)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it("should throw NotFoundException when file not found on server", async () => {
+      mockRepository.findOne.mockResolvedValue(mockDocument);
+      require("fs").existsSync.mockReturnValue(false);
+
+      await expect(service.retrieveDocument(1)).rejects.toThrow(
+        "File not found on server"
+      );
+    });
   });
 
-  it("should get a document by id", async () => {
-    repo.findOne.mockResolvedValue({} as any);
+  describe("updateDocument", () => {
+    const mockFile = {
+      originalname: "updated.txt",
+      filename: "updated-123.txt",
+      mimetype: "text/plain",
+      path: "/tmp/updated-123.txt",
+    } as Express.Multer.File;
 
-    await service.getDocumentById(1);
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-  });
-
-  it("should get a document by id", async () => {
-    repo.findOne.mockResolvedValue({} as any);
-
-    await service.getDocumentById(1);
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-  });
-
-  it("should throw an error if the document is not found", async () => {
-    repo.findOne.mockResolvedValue(null);
-
-    await expect(service.getDocumentById(1)).rejects.toThrow(NotFoundException);
-  });
-
-  it("should retrieve a document by id", async () => {
-    const createReadStreamSpy = jest
-      .spyOn(nodeFs, "createReadStream")
-      .mockReturnValue({} as any);
-    config.get.mockReturnValue("upload.path");
-    const document = {
-      name: "name",
-    } as any;
-
-    repo.findOne.mockResolvedValue(document);
-
-    const readStream = await service.retrieveDocument(1);
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-    expect(createReadStreamSpy).toHaveBeenCalledTimes(1);
-    expect(readStream).toBeDefined();
-  });
-
-  it("should update a document", async () => {
-    const rmSpy = jest.spyOn(fs, "rm").mockResolvedValue();
-    config.get.mockReturnValue("upload.path");
-    const document = {
-      name: "name",
-      originalName: "originalName",
-      mimeType: "mimeType",
-    } as any;
-
-    repo.findOne.mockResolvedValue(document);
-    repo.save.mockResolvedValue({} as any);
-
-    await service.updateDocument(1, {
-      originalname: "originalname",
-      filename: "filename",
-      mimetype: "mimetype",
-    } as any);
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-    expect(repo.save).toHaveBeenCalledTimes(1);
-    expect(rmSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("should throw an error when updating a document", async () => {
-    const rmSpy = jest.spyOn(fs, "rm").mockResolvedValue();
-    config.get.mockReturnValue("upload.path");
-    const document = {
-      name: "name",
-      originalName: "originalName",
-      mimeType: "mimeType",
-    } as any;
-
-    repo.findOne.mockResolvedValue(document);
-    repo.save.mockRejectedValue(new Error("error"));
-
-    await expect(
-      service.updateDocument(1, {
-        originalname: "originalname",
-        filename: "filename",
-        mimetype: "mimetype",
-      } as any)
-    ).rejects.toThrow();
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-    expect(repo.save).toHaveBeenCalledTimes(1);
-    expect(rmSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("should be able to delete a document", async () => {
-    const rmSpy = jest.spyOn(fs, "rm").mockResolvedValue();
-
-    config.get.mockReturnValue("upload.path");
-
-    const document = {
-      name: "name",
-    } as any;
-
-    repo.findOne.mockResolvedValue(document);
-
-    await service.deleteDocument(1);
-
-    expect(repo.findOne).toHaveBeenCalledTimes(1);
-    expect(rmSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("should return the size of a document", async () => {
-    const statSpy = jest
-      .spyOn(fs, "stat")
-      .mockResolvedValue({ size: 0 } as any);
-
-    (convertBytes as jest.Mock).mockReturnValue("124 MB");
-
-    const size = await service.getSizeOfDocument("path");
-
-    expect(statSpy).toHaveBeenCalledTimes(1);
-    expect(convertBytes).toHaveBeenCalledTimes(1);
-    expect(size).toBe("124 MB");
-  });
-
-  it("should list all documents", async () => {
-    const documents = [
-      {
+    it("should update a document", async () => {
+      const oldDocument = {
         id: 1,
-        originalName: "name",
-        uploadedAt: new Date(),
-      },
-    ] as any;
+        name: "old.txt",
+      };
 
-    jest.spyOn(path, "join").mockReturnValue("path");
+      mockRepository.findOne.mockResolvedValue(oldDocument);
+      mockRepository.save.mockResolvedValue({
+        ...oldDocument,
+        originalName: mockFile.originalname,
+        name: mockFile.filename,
+        mimeType: mockFile.mimetype,
+      });
 
-    repo.find.mockResolvedValue(documents);
-    (convertBytes as jest.Mock).mockReturnValue("124 MB");
+      await service.updateDocument(1, mockFile);
 
-    const list = await service.listDocuments();
+      expect(mockRepository.save).toHaveBeenCalled();
+      expect(require("fs/promises").rm).toHaveBeenCalled();
+    });
 
-    expect(repo.find).toHaveBeenCalledTimes(1);
-    expect(convertBytes).toHaveBeenCalledTimes(1);
-    expect(list).toEqual([
-      {
+    it("should throw NotFoundException when document not found", async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.updateDocument(1, mockFile)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it("should handle update error and cleanup new file", async () => {
+      const oldDocument = {
         id: 1,
-        name: "name",
-        size: "124 MB",
-        uploadedAt: documents[0].uploadedAt,
-      },
-    ]);
+        name: "old.txt",
+      };
+
+      mockRepository.findOne.mockResolvedValue(oldDocument);
+      mockRepository.save.mockRejectedValue(new Error("Update failed"));
+
+      await expect(service.updateDocument(1, mockFile)).rejects.toThrow(
+        "Update failed"
+      );
+      expect(require("fs/promises").rm).toHaveBeenCalledWith(mockFile.path);
+    });
+  });
+
+  describe("deleteDocument", () => {
+    it("should delete a document", async () => {
+      const mockDocument = {
+        id: 1,
+        name: "test.txt",
+      };
+
+      mockRepository.findOne.mockResolvedValue(mockDocument);
+
+      await service.deleteDocument(1);
+
+      expect(mockRepository.remove).toHaveBeenCalledWith(mockDocument);
+      expect(require("fs/promises").rm).toHaveBeenCalled();
+    });
+
+    it("should throw NotFoundException when document not found", async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.deleteDocument(1)).rejects.toThrow(
+        NotFoundException
+      );
+    });
+  });
+
+  describe("listDocuments", () => {
+    it("should list all documents with sizes", async () => {
+      const mockDocuments = [
+        {
+          id: 1,
+          name: "doc1.txt",
+          originalName: "original1.txt",
+          uploadedAt: new Date(),
+        },
+      ];
+
+      mockRepository.find.mockResolvedValue(mockDocuments);
+      require("fs/promises").stat.mockResolvedValue({ size: 1024 });
+
+      const result = await service.listDocuments();
+
+      expect(result).toEqual([
+        {
+          id: 1,
+          name: "original1.txt",
+          size: "1 KB",
+          uploadedAt: expect.any(Date),
+        },
+      ]);
+    });
+
+    it("should handle empty document list", async () => {
+      mockRepository.find.mockResolvedValue([]);
+
+      const result = await service.listDocuments();
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("getSizeOfDocument", () => {
+    it("should return human readable size", async () => {
+      require("fs/promises").stat.mockResolvedValue({ size: 1024 });
+
+      const result = await service.getSizeOfDocument("test.txt");
+
+      expect(result).toBe("1 KB");
+      expect(require("fs/promises").stat).toHaveBeenCalledWith("test.txt");
+    });
+
+    it("should handle file stat error", async () => {
+      require("fs/promises").stat.mockRejectedValue(
+        new Error("File not found")
+      );
+
+      await expect(service.getSizeOfDocument("test.txt")).rejects.toThrow(
+        "File not found"
+      );
+    });
   });
 });

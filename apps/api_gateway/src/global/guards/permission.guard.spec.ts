@@ -1,4 +1,5 @@
-import { createMock, DeepMocked } from "@golevelup/ts-jest";
+import { createMock } from "@golevelup/ts-jest/lib/mocks";
+import { DeepMocked } from "@golevelup/ts-jest/lib/mocks";
 import { ExecutionContext, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";

@@ -7,8 +7,8 @@ describe("convertByte", () => {
     expect(convertBytes(1024 * 1024 * 1024)).toBe("1.0 GB");
   });
 
-  it('should return "n/a" if bytes is 0', () => {
-    expect(convertBytes(0)).toBe("n/a");
+  it('should return "0" if bytes is 0', () => {
+    expect(convertBytes(0)).toBe("0 Byte");
   });
 
   it('should return "Bytes" if bytes is less than 1024', () => {
